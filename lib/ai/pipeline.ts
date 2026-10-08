@@ -45,26 +45,16 @@ export interface ArticleInput extends RawArticle {
 }
 
 const PER_CATEGORY_LIMIT: Record<Category, number> = {
-  tech: 25,
-  finance: 20,
-  politics: 15,
+  tech: 28,
+  finance: 30,
+  politics: 24,
 };
 
-const MAX_AGE_DAYS = 14;
+// Morning-market intelligence should be fresh. Older stories are useful only
+// when a source does not provide a timestamp; the primary selection window is
+// the last 48 hours rather than the original 14 days.
+const MAX_AGE_DAYS = 2;
 
-/**
- * Pick `limit` items from `items` so every source gets a fair shot.
- *
- * Why this exists: the previous `slice(0, limit)` honored insertion order,
- * which is the source-iteration order in daily.ts. That gave whichever
- * source came first 100% of the quota — e.g. all 25 tech slots filled by
- * Hacker News before GitHub Trending / Solidot / V2EX / 阮一峰 got a turn.
- *
- * Strategy: drop items older than MAX_AGE_DAYS, group by sourceId,
- * sort each bucket newest-first, then round-robin one item per source
- * until we hit the limit. Sources with fewer items naturally drop out
- * and others absorb the slack.
- */
 function selectRoundRobin(
   items: ArticleInput[],
   limit: number,
@@ -103,53 +93,55 @@ function selectRoundRobin(
 }
 
 async function callOnce(userPayloadJson: string): Promise<DailyReport> {
-  // Claude Code CLI's built-in system prompt biases the model toward
-  // conversational markdown output. Anchor the format expectation in the
-  // user message (instruction recency wins) *and* explicitly demand every
-  // schema field be populated — without this Sonnet has been observed to
-  // emit a JSON shell with empty arrays to "satisfy" a JSON-only ask.
   const userPrompt =
     REPORT_LOCALE === "en"
       ? [
-          "**Output language: ENGLISH ONLY.** Every string value in the JSON — hero_headline, daily_overview, every brief's title/summary, editor_note, keywords — must be written entirely in English. No Chinese characters anywhere.",
+          "**Output language: ENGLISH ONLY.** Every string value in the JSON must be written entirely in English.",
           "",
-          "Your task: generate today's daily brief from the candidate news below. **The response MUST be a single valid JSON object** — starts with `{`, ends with `}`, no markdown, no code fences, no explanations.",
+          "Generate today's GLOBAL MARKETS MORNING NOTE from the candidate news below.",
+          "This is an investment-intelligence product, not a generic news digest.",
+          "**The response MUST be one valid JSON object** — starts with {, ends with }, no markdown, no code fences, no explanations.",
           "",
-          "The JSON must contain every field non-empty (briefs arrays per the system-prompt counts):",
-          "  - hero_headline: 10-25 word headline of the day",
-          "  - daily_overview: **150-250 word** paragraph covering tech / finance / politics signals so a reader sees the whole picture at a glance",
-          "  - tech_briefs: **3-5** tech BriefItems",
-          "  - finance_briefs: **3-5** finance BriefItems",
-          "  - politics_briefs: **2-3** politics BriefItems",
-          "  - editor_note: 30-60 word editor's note",
-          "  - keywords: 5-8 keywords",
+          "Required fields:",
+          "  - hero_headline: 10-25 words; the single market-defining headline",
+          "  - daily_overview: 150-220 words; TOP LINES covering risk tone, rates/policy/geopolitics, strongest structural theme and biggest risk",
+          "  - tech_briefs: 3-5 items; AI/GitHub/semis/data centers/aerospace/advanced technology with investor read-through",
+          "  - finance_briefs: 4-6 items; cross-asset/equities/rates/commodities/China read-through and actionable market implications",
+          "  - politics_briefs: 3-5 items; Trump/Washington/U.S.-China/geopolitics with policy-vs-rhetoric distinction",
+          "  - editor_note: 40-80 words; BOTTOM LINE + one underpriced second-order idea",
+          "  - keywords: 6-10 market-relevant keywords",
           "",
-          "BriefItem fields: title, url (copied verbatim from candidate), source, summary, importance (1-10).",
-          "**Quote rule (important!)**: For any quotation INSIDE a JSON string, use single quotes ' or curly quotes '\" — **never** raw double quotes \", which break JSON parsing.",
+          "BriefItem fields: title, url, source, summary, importance (1-10).",
+          "Every summary should compress: WHAT HAPPENED → WHY MARKETS CARE → ASSETS/SECTORS EXPOSED.",
+          "Use candidate URLs verbatim. Never invent a link.",
+          "Do not include low-signal lifestyle, celebrity, sports, or generic technology stories unless they have clear market impact.",
           "No trailing commas.",
           "",
           `Candidate news (JSON array, ${userPayloadJson.length} chars):`,
           userPayloadJson,
         ].join("\n")
       : [
-          "你的任务：根据下方候选新闻，生成一份当日简报，**响应必须是一个合法 JSON 对象**——以 `{` 开头，以 `}` 结尾，不要 markdown / 不要代码围栏 / 不要任何解释。",
+          "根据下方候选新闻生成今天的 GLOBAL MARKETS MORNING NOTE。",
+          "这是一份投资情报产品，不是普通新闻摘要。",
+          "**响应必须是一个合法 JSON 对象**——不要 markdown、代码围栏或解释。",
           "",
-          "JSON 必须包含全部字段且不能为空（briefs 数组按 system prompt 规定的条数填充）：",
-          "  - hero_headline: 10-25 字的当日一句话头条",
-          "  - daily_overview: **150-220 字** 的当日总览段落，一段话覆盖技术 / 财经 / 时政 的核心信号，让读者一眼抓住全貌",
-          "  - tech_briefs: **3-5 条** 科技 BriefItem",
-          "  - finance_briefs: **3-5 条** 财经 BriefItem",
-          "  - politics_briefs: **2-3 条** 时政 BriefItem",
-          "  - editor_note: 30-60 字的编辑短评",
-          "  - keywords: 5-8 个关键词",
+          "必须包含：",
+          "  - hero_headline：10-25 字，今天最重要的市场主线",
+          "  - daily_overview：150-220 字，像投行晨会 Top Lines，说明风险基调、政策/利率/地缘变量、最大风险和最强结构性主题",
+          "  - tech_briefs：3-5 条，聚焦 AI/GitHub/半导体/数据中心/航天/先进技术及其投资映射",
+          "  - finance_briefs：4-6 条，聚焦跨资产、美股、利率、商品、A股映射和投资影响",
+          "  - politics_briefs：3-5 条，聚焦 Trump/华盛顿/中美关系/地缘政治，并区分政策言论与正式执行",
+          "  - editor_note：40-80 字，Bottom Line + 一个市场可能低估的二阶机会",
+          "  - keywords：6-10 个关键词",
           "",
-          "BriefItem 字段：title、url（必须从候选条目原样选取）、source、summary、importance(1-10)。",
-          "**引号规则（重要！）**：JSON 字符串内的中文引用请使用**中文全角引号**「」或者 “”，**绝对不要**用英文双引号 \" —— 那会导致 JSON 解析失败。例：写 商务部回应「内卷」 而不是 商务部回应\"内卷\"。",
-          "不要使用单引号、不要末尾多余逗号。",
+          "每条 BriefItem 必须包含 title、url、source、summary、importance(1-10)。",
+          "summary 压缩表达：发生了什么 → 为什么市场在意 → 哪些资产/行业受影响。",
+          "url 必须原样使用候选链接，禁止编造。",
           "",
           "候选新闻（JSON 数组，共 " + userPayloadJson.length + " 字符）：",
           userPayloadJson,
         ].join("\n");
+
   const { text } = await runLlm({
     systemPrompt: SYSTEM_PROMPT_DIGEST,
     userPrompt,
@@ -159,9 +151,6 @@ async function callOnce(userPayloadJson: string): Promise<DailyReport> {
   try {
     parsed = JSON.parse(cleaned) as Partial<DailyReport>;
   } catch (strictErr) {
-    // LLMs routinely emit JSON with unescaped quotes inside Chinese
-    // strings (e.g. 商务部回应"内卷"). jsonrepair fixes most of these
-    // mechanically before we ever surface a failure.
     try {
       const repaired = jsonrepair(cleaned);
       parsed = JSON.parse(repaired) as Partial<DailyReport>;
@@ -212,8 +201,9 @@ export async function generateDailyReport(
     title: a.title,
     url: a.url,
     source: a.source,
+    source_id: a.sourceId,
     category: a.category,
-    excerpt: (a.excerpt ?? "").slice(0, 200),
+    excerpt: (a.excerpt ?? "").slice(0, 260),
     published: a.publishedAt?.toISOString() ?? "",
   }));
   const userPayloadJson = JSON.stringify(userPayload);
@@ -222,17 +212,13 @@ export async function generateDailyReport(
   try {
     report = await callOnce(userPayloadJson);
   } catch (firstErr) {
-    // One retry — claude CLI occasionally wraps in narration on the first
-    // pass but obeys when the same prompt is repeated.
     console.warn(
-      `[pipeline] first claude CLI call failed, retrying: ${
+      `[pipeline] first LLM call failed, retrying: ${
         firstErr instanceof Error ? firstErr.message : String(firstErr)
       }`,
     );
     report = await callOnce(userPayloadJson);
   }
 
-  // Max subscription has no per-call token meter — we expose 0 for schema
-  // compatibility; consumers should treat 0 as "metric not available".
   return { report, tokensUsed: 0 };
 }
