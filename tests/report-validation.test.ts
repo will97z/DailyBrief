@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validateDailyReport, type DailyReport} from '../lib/ai/pipeline';
+const candidates = [{category:'tech' as const,url:'https://example.com/news'}];
+const complete = (): DailyReport => ({hero_headline:'Headline',daily_overview:'Overview',editor_note:'Note',keywords:['AI'],tech_briefs:[{title:'News',url:candidates[0].url,source:'Source',summary:'Summary',importance:7}],finance_briefs:[],politics_briefs:[]});
+test('accepts a grounded report and empty categories without candidates',()=>validateDailyReport(complete(),candidates));
+test('rejects partial responses recovered from truncated JSON',()=>assert.throws(()=>validateDailyReport({hero_headline:'Headline',daily_overview:'Overview'},candidates),/Incomplete/));
+test('rejects empty briefs when candidates are available',()=>assert.throws(()=>validateDailyReport({...complete(),tech_briefs:[]},candidates),/tech_briefs/));
+test('rejects invented links',()=>{const r=complete();r.tech_briefs[0].url='https://example.com/invented';assert.throws(()=>validateDailyReport(r,candidates),/ungrounded/)});
+test('rejects malformed brief content',()=>{const r=complete();r.tech_briefs[0].importance=NaN;assert.throws(()=>validateDailyReport(r,candidates),/malformed/)});

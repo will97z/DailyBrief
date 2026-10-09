@@ -171,6 +171,7 @@ async function callOnce(userPayloadJson: string): Promise<DailyReport> {
       throw strictErr;
     }
   }
+  validateDailyReport(parsed, JSON.parse(userPayloadJson));
   return {
     hero_headline: parsed.hero_headline ?? "",
     daily_overview: parsed.daily_overview ?? "",
@@ -180,6 +181,31 @@ async function callOnce(userPayloadJson: string): Promise<DailyReport> {
     editor_note: parsed.editor_note ?? "",
     keywords: parsed.keywords ?? [],
   };
+}
+
+export function validateDailyReport(report: Partial<DailyReport>, candidates: Array<{category: Category; url: string}>): void {
+  for (const field of ["hero_headline", "daily_overview", "editor_note"] as const) {
+    if (typeof report[field] !== "string" || !report[field]!.trim()) {
+      throw new Error(`Incomplete LLM report: ${field} must be a nonempty string`);
+    }
+  }
+  if (!Array.isArray(report.keywords) || !report.keywords.length || report.keywords.some(k => typeof k !== "string" || !k.trim())) {
+    throw new Error("Incomplete LLM report: keywords must contain strings");
+  }
+  const urls = new Set(candidates.map(a => a.url));
+  for (const category of ["tech", "finance", "politics"] as const) {
+    const field = `${category}_briefs` as const;
+    const items = report[field];
+    if (!Array.isArray(items) || (candidates.some(a => a.category === category) && !items.length)) {
+      throw new Error(`Incomplete LLM report: ${field} must contain briefs for available candidates`);
+    }
+    for (const item of items) {
+      if (!item || [item.title, item.url, item.source, item.summary].some(v => typeof v !== "string" || !v.trim()) ||
+          !Number.isFinite(item.importance) || item.importance < 1 || item.importance > 10 || !urls.has(item.url)) {
+        throw new Error(`Invalid LLM report: malformed or ungrounded item in ${field}`);
+      }
+    }
+  }
 }
 
 export async function generateDailyReport(
