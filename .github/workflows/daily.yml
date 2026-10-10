@@ -247,6 +247,40 @@ jobs:
       - name: Build static site (index + archive)
         run: npm run build-site
 
+      - name: Email today's report via Gmail
+        if: ${{ success() }}
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT: william97zhang@gmail.com
+          REPORT_SENDER: william97zhang@gmail.com
+          REPORT_TZ: ${{ vars.REPORT_TZ || 'Asia/Shanghai' }}
+        run: |
+          if [ -z "$GMAIL_APP_PASSWORD" ]; then
+            echo "::warning::GMAIL_APP_PASSWORD secret is missing. Skipping email."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import os, pathlib, smtplib
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from email.message import EmailMessage
+
+          day = datetime.now(ZoneInfo(os.environ["REPORT_TZ"])).strftime("%Y-%m-%d")
+          report = pathlib.Path("daily_reports") / day / f"{day}.html"
+          if not report.is_file():
+              raise SystemExit(f"Expected report is missing: {report}")
+          msg = EmailMessage()
+          msg["Subject"] = f"DailyBrief | {day}"
+          msg["From"] = os.environ["REPORT_SENDER"]
+          msg["To"] = os.environ["REPORT_RECIPIENT"]
+          msg.set_content(f"Your DailyBrief for {day} is attached as an HTML report.\n")
+          msg.add_attachment(report.read_bytes(), maintype="text", subtype="html", filename=f"DailyBrief-{day}.html")
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+              smtp.login(os.environ["REPORT_SENDER"], os.environ["GMAIL_APP_PASSWORD"])
+              smtp.send_message(msg)
+          print(f"DailyBrief email sent to {os.environ['REPORT_RECIPIENT']}")
+          PY
+
       - name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
